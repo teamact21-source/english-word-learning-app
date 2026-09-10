@@ -1,16 +1,19 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
-import { ArrowRight, Check, RotateCcw, Sparkles } from 'lucide-react';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRight, Check, GraduationCap, RotateCcw, Sparkles } from 'lucide-react';
+import wordData from '@/data/words.json';
 
 type Phase = 'learn' | 'answer' | 'result';
-const words = [
-  { english: 'Dog', japanese: '犬' }, { english: 'Cat', japanese: '猫' },
-  { english: 'Apple', japanese: 'りんご' }, { english: 'Book', japanese: '本' },
-  { english: 'Flower', japanese: '花' }, { english: 'Morning', japanese: '朝' },
-  { english: 'Window', japanese: '窓' }, { english: 'Beautiful', japanese: '美しい' },
-  { english: 'Friend', japanese: '友達' }, { english: 'Tomorrow', japanese: '明日' },
-  { english: 'Kitchen', japanese: '台所' }, { english: 'Mountain', japanese: '山' },
+type Course = 'review' | 'exam';
+type Word = { english: string; japanese: string; course: Course; level: string; pos: string };
+
+const allWords = wordData as Word[];
+const courses: { id: Course; name: string; shortName: string; description: string }[] = [
+  { id: 'review', name: '中学総復習', shortName: '総復習', description: '基礎からしっかり 1,800語' },
+  { id: 'exam', name: '高校入試頻出', shortName: '入試頻出', description: '差がつく重要語 500語' },
 ];
+const posNames: Record<string, string> = { noun: '名詞', verb: '動詞', adjective: '形容詞', adverb: '副詞', preposition: '前置詞', conjunction: '接続詞', pronoun: '代名詞', determiner: '限定詞', interjection: '間投詞', numeral: '数詞' };
 
 function diffAnswer(answer: string, correct: string) {
   const a = [...answer], b = [...correct];
@@ -32,46 +35,74 @@ function diffAnswer(answer: string, correct: string) {
 }
 
 export default function Home() {
+  const [course, setCourse] = useState<Course>('review');
   const [phase, setPhase] = useState<Phase>('learn');
   const [index, setIndex] = useState(0);
+  const [questionCount, setQuestionCount] = useState(1);
   const [answer, setAnswer] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-  const word = words[index];
+  const remainingRef = useRef<number[]>([]);
+  const words = useMemo(() => allWords.filter((word) => word.course === course), [course]);
+  const word = words[index] ?? words[0];
   const isCorrect = answer.trim().toLowerCase() === word.english.toLowerCase();
-  useEffect(() => { if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js'); }, []);
+
+  const drawRandomWord = (current: number | null = null, list = words) => {
+    let choices = remainingRef.current.filter((item) => item !== current && item < list.length);
+    if (!choices.length) choices = list.map((_, wordIndex) => wordIndex).filter((item) => item !== current);
+    const selected = choices[Math.floor(Math.random() * choices.length)];
+    remainingRef.current = choices.filter((item) => item !== selected);
+    setIndex(selected);
+  };
+
+  useEffect(() => {
+    drawRandomWord(null, words);
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+  }, []);
   useEffect(() => { if (phase === 'answer') window.setTimeout(() => inputRef.current?.focus(), 120); }, [phase]);
   useEffect(() => {
     const modelContext = (document as Document & { modelContext?: { registerTool: (tool: unknown, options?: { signal?: AbortSignal }) => void | Promise<void> } }).modelContext;
     if (!modelContext?.registerTool) return;
     const lifecycle = new AbortController();
     void Promise.resolve(modelContext.registerTool({
-      name: 'start_word_practice',
-      title: '英単語の練習を始める',
-      description: '指定した番号の英単語から、見る・書く練習を開始します。',
-      inputSchema: { type: 'object', properties: { wordNumber: { type: 'integer', minimum: 1, maximum: words.length } }, required: ['wordNumber'], additionalProperties: false },
+      name: 'start_word_practice', title: '英単語の練習を始める',
+      description: '中学総復習または高校入試頻出コースのランダム練習を開始します。',
+      inputSchema: { type: 'object', properties: { course: { type: 'string', enum: ['review', 'exam'] } }, required: ['course'], additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
       execute(input: unknown) {
-        const value = input as { wordNumber?: unknown };
-        if (!Number.isInteger(value.wordNumber) || Number(value.wordNumber) < 1 || Number(value.wordNumber) > words.length) throw new Error(`wordNumber must be between 1 and ${words.length}`);
-        const nextIndex = Number(value.wordNumber) - 1;
-        setIndex(nextIndex); setAnswer(''); setPhase('learn');
-        return { wordNumber: nextIndex + 1, phase: 'learn', english: words[nextIndex].english };
+        const selected = (input as { course?: unknown }).course;
+        if (selected !== 'review' && selected !== 'exam') throw new Error('course must be review or exam');
+        setCourse(selected); setQuestionCount(1); setAnswer(''); setPhase('learn'); remainingRef.current = [];
+        return { course: selected, phase: 'learn' };
       },
     }, { signal: lifecycle.signal })).catch(() => undefined);
     return () => lifecycle.abort();
   }, []);
-  const nextWord = () => { setIndex((current) => (current + 1) % words.length); setAnswer(''); setPhase('learn'); };
+
+  const chooseCourse = (nextCourse: Course) => {
+    if (nextCourse === course) return;
+    const nextWords = allWords.filter((item) => item.course === nextCourse);
+    remainingRef.current = [];
+    setCourse(nextCourse); setQuestionCount(1); setAnswer(''); setPhase('learn');
+    drawRandomWord(null, nextWords);
+  };
+  const nextWord = () => { drawRandomWord(index); setQuestionCount((count) => count + 1); setAnswer(''); setPhase('learn'); };
+  const restart = () => { remainingRef.current = []; drawRandomWord(index); setQuestionCount(1); setAnswer(''); setPhase('learn'); };
+  const activeCourse = courses.find((item) => item.id === course)!;
+
   return <main className="app-shell">
     <div className="orb orb-one" aria-hidden="true"/><div className="orb orb-two" aria-hidden="true"/>
     <section className="study-wrap" aria-live="polite">
-      <header className="topbar"><a className="brand" href="/" aria-label="最初から学習する"><span className="brand-mark">W</span><span>Write &amp; Remember</span></a><span className="progress-label">{index + 1} / {words.length}</span></header>
-      <div className="progress-track" aria-label={`${words.length}問中${index + 1}問目`}><span style={{ width: `${((index + 1) / words.length) * 100}%` }}/></div>
-      <div className={`study-card phase-${phase}`}><div className="card-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</div>
-        {phase === 'learn' && <div className="panel" key={`learn-${index}`}><div className="eyebrow"><Sparkles size={16}/> INPUT</div><h1>単語をおぼえよう💡</h1><p className="main-word">{word.english}</p><p className="hint">声に出して、つづりを目で追ってみましょう。</p><button className="primary-button" onClick={() => setPhase('answer')}>次へ <ArrowRight size={21}/></button></div>}
-        {phase === 'answer' && <form className="panel" key={`answer-${index}`} onSubmit={(event) => { event.preventDefault(); if (answer.trim()) setPhase('result'); }}><div className="eyebrow pencil">✎ OUTPUT</div><h1>単語を書こう✏️</h1><p className="question-word">{word.japanese}</p><label className="answer-label" htmlFor="answer">英単語を入力</label><input ref={inputRef} id="answer" className="answer-input" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="ここに書いてね" autoComplete="off" autoCapitalize="none" spellCheck={false}/><button className="primary-button" type="submit" disabled={!answer.trim()}>answer <Check size={21}/></button></form>}
-        {phase === 'result' && <div className="panel result-panel" key={`result-${index}`}><div className={`result-icon ${isCorrect ? 'correct' : 'incorrect'}`}>{isCorrect ? <Check size={34} strokeWidth={3}/> : '×'}</div><h1 className={isCorrect ? 'success-text' : 'error-text'}>{isCorrect ? '正解！' : 'おしい！'}</h1>{isCorrect ? <><p className="main-word result-word">{word.english}</p><p className="hint">ばっちりです。その調子！</p></> : <div className="correction"><div><span className="correction-label">あなたの答え</span><p className="typed-answer">{diffAnswer(answer, word.english).map((state, charIndex) => <span className={state === 'wrong' ? 'wrong-char' : undefined} key={`${charIndex}-${answer[charIndex]}`}>{answer[charIndex]}</span>)}</p></div><div className="answer-rule"/><div><span className="correction-label">正解</span><p className="correct-answer">{word.english}</p></div></div>}<button className="primary-button" onClick={nextWord}>次の単語へ <ArrowRight size={21}/></button></div>}
+      <header className="topbar"><a className="brand" href="/" aria-label="最初から学習する"><span className="brand-mark">W</span><span>Write &amp; Remember</span></a><span className="progress-label">🎲 RANDOM</span></header>
+      <div className="course-picker" aria-label="学習コース">
+        {courses.map((item) => <button key={item.id} className={course === item.id ? 'active' : ''} onClick={() => chooseCourse(item.id)}><span>{item.shortName}</span><small>{item.id === 'review' ? '1,800語' : '500語'}</small></button>)}
       </div>
-      <button className="restart" onClick={() => { setIndex(0); setAnswer(''); setPhase('learn'); }}><RotateCcw size={15}/> 最初から</button>
+      <div className="progress-track random-progress" aria-label={`${activeCourse.name} ランダム出題モード`}><span/></div>
+      <div className={`study-card phase-${phase}`}><div className="card-number" aria-hidden="true">{String(questionCount).padStart(2, '0')}</div>
+        {phase === 'learn' && <div className="panel" key={`learn-${course}-${index}`}><div className="eyebrow"><Sparkles size={16}/> {activeCourse.name}</div><h1>単語をおぼえよう💡</h1><p className="main-word">{word.english}</p><p className="word-meta">{word.level} ・ {posNames[word.pos] ?? word.pos}</p><p className="hint">声に出して、つづりを目で追ってみましょう。</p><button className="primary-button" onClick={() => setPhase('answer')}>次へ <ArrowRight size={21}/></button></div>}
+        {phase === 'answer' && <form className="panel" key={`answer-${course}-${index}`} onSubmit={(event) => { event.preventDefault(); if (answer.trim()) setPhase('result'); }}><div className="eyebrow pencil"><GraduationCap size={17}/> {activeCourse.name}</div><h1>単語を書こう✏️</h1><p className={`question-word meaning ${word.japanese.length > 20 ? 'long' : ''}`}>{word.japanese}</p><p className="word-meta">{posNames[word.pos] ?? word.pos}</p><label className="answer-label" htmlFor="answer">英単語を入力</label><input ref={inputRef} id="answer" className="answer-input" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="ここに書いてね" autoComplete="off" autoCapitalize="none" spellCheck={false}/><button className="primary-button" type="submit" disabled={!answer.trim()}>answer <Check size={21}/></button></form>}
+        {phase === 'result' && <div className="panel result-panel" key={`result-${course}-${index}`}><div className={`result-icon ${isCorrect ? 'correct' : 'incorrect'}`}>{isCorrect ? <Check size={34} strokeWidth={3}/> : '×'}</div><h1 className={isCorrect ? 'success-text' : 'error-text'}>{isCorrect ? '正解！' : 'おしい！'}</h1>{isCorrect ? <><p className="main-word result-word">{word.english}</p><p className="hint">ばっちりです。その調子！</p></> : <div className="correction"><div><span className="correction-label">あなたの答え</span><p className="typed-answer">{diffAnswer(answer, word.english).map((state, charIndex) => <span className={state === 'wrong' ? 'wrong-char' : undefined} key={`${charIndex}-${answer[charIndex]}`}>{answer[charIndex]}</span>)}</p></div><div className="answer-rule"/><div><span className="correction-label">正解</span><p className="correct-answer">{word.english}</p></div></div>}<button className="primary-button" onClick={nextWord}>次の単語へ <ArrowRight size={21}/></button></div>}
+      </div>
+      <div className="below-card"><button className="restart" onClick={restart}><RotateCcw size={15}/> シャッフルし直す</button><span>CEFR-J 1.6・EJDictを基に構成</span></div>
     </section>
   </main>;
 }
