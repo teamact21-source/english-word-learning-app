@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, GraduationCap, RotateCcw, Sparkles } from 'lucide-react';
 import wordData from '@/data/words.json';
 
@@ -9,14 +9,22 @@ type Course = 'review' | 'exam';
 type Word = { english: string; japanese: string; course: Course; level: string; pos: string };
 
 const allWords = wordData as Word[];
+const wordLists: Record<Course, Word[]> = {
+  review: allWords.filter((word) => word.course === 'review'),
+  exam: allWords.filter((word) => word.course === 'exam'),
+};
 const courses: { id: Course; name: string; shortName: string; description: string }[] = [
   { id: 'review', name: '中学総復習', shortName: '総復習', description: '基礎からしっかり 1,800語' },
   { id: 'exam', name: '高校入試頻出', shortName: '入試頻出', description: '差がつく重要語 500語' },
 ];
 const posNames: Record<string, string> = { noun: '名詞', verb: '動詞', adjective: '形容詞', adverb: '副詞', preposition: '前置詞', conjunction: '接続詞', pronoun: '代名詞', determiner: '限定詞', interjection: '間投詞', numeral: '数詞' };
 
+function randomIndex(length: number) {
+  return Math.floor(Math.random() * length);
+}
+
 function diffAnswer(answer: string, correct: string) {
-  const a = [...answer], b = [...correct];
+  const a = Array.from(answer), b = Array.from(correct);
   const costs = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
   for (let i = 0; i <= a.length; i++) costs[i][0] = i;
   for (let j = 0; j <= b.length; j++) costs[0][j] = j;
@@ -42,21 +50,26 @@ export default function Home() {
   const [answer, setAnswer] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const remainingRef = useRef<number[]>([]);
-  const words = useMemo(() => allWords.filter((word) => word.course === course), [course]);
+  const words = wordLists[course];
   const word = words[index] ?? words[0];
   const isCorrect = answer.trim().toLowerCase() === word.english.toLowerCase();
 
   const drawRandomWord = (current: number | null = null, list = words) => {
     let choices = remainingRef.current.filter((item) => item !== current && item < list.length);
     if (!choices.length) choices = list.map((_, wordIndex) => wordIndex).filter((item) => item !== current);
-    const selected = choices[Math.floor(Math.random() * choices.length)];
+    const selected = choices[randomIndex(choices.length)];
     remainingRef.current = choices.filter((item) => item !== selected);
     setIndex(selected);
   };
 
   useEffect(() => {
-    drawRandomWord(null, words);
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+    const timer = window.setTimeout(() => {
+      const first = randomIndex(wordLists.review.length);
+      remainingRef.current = wordLists.review.map((_, itemIndex) => itemIndex).filter((itemIndex) => itemIndex !== first);
+      setIndex(first);
+    }, 0);
+    if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+    return () => window.clearTimeout(timer);
   }, []);
   useEffect(() => { if (phase === 'answer') window.setTimeout(() => inputRef.current?.focus(), 120); }, [phase]);
   useEffect(() => {
@@ -71,7 +84,7 @@ export default function Home() {
       execute(input: unknown) {
         const selected = (input as { course?: unknown }).course;
         if (selected !== 'review' && selected !== 'exam') throw new Error('course must be review or exam');
-        setCourse(selected); setQuestionCount(1); setAnswer(''); setPhase('learn'); remainingRef.current = [];
+        setCourse(selected); setIndex(0); setQuestionCount(1); setAnswer(''); setPhase('learn'); remainingRef.current = [];
         return { course: selected, phase: 'learn' };
       },
     }, { signal: lifecycle.signal })).catch(() => undefined);
@@ -80,7 +93,7 @@ export default function Home() {
 
   const chooseCourse = (nextCourse: Course) => {
     if (nextCourse === course) return;
-    const nextWords = allWords.filter((item) => item.course === nextCourse);
+    const nextWords = wordLists[nextCourse];
     remainingRef.current = [];
     setCourse(nextCourse); setQuestionCount(1); setAnswer(''); setPhase('learn');
     drawRandomWord(null, nextWords);
@@ -92,7 +105,7 @@ export default function Home() {
   return <main className="app-shell">
     <div className="orb orb-one" aria-hidden="true"/><div className="orb orb-two" aria-hidden="true"/>
     <section className="study-wrap" aria-live="polite">
-      <header className="topbar"><a className="brand" href="/" aria-label="最初から学習する"><span className="brand-mark">W</span><span>Write &amp; Remember</span></a><span className="progress-label">🎲 RANDOM</span></header>
+      <header className="topbar"><button className="brand brand-button" onClick={restart} aria-label="学習をシャッフルし直す"><span className="brand-mark">W</span><span>Write &amp; Remember</span></button><span className="progress-label">🎲 RANDOM</span></header>
       <div className="course-picker" aria-label="学習コース">
         {courses.map((item) => <button key={item.id} className={course === item.id ? 'active' : ''} onClick={() => chooseCourse(item.id)}><span>{item.shortName}</span><small>{item.id === 'review' ? '1,800語' : '500語'}</small></button>)}
       </div>
