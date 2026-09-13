@@ -55,3 +55,8 @@ npm run format
 - Vinext / Vite
 - Cloudflare Workers
 
+## ライセンス
+
+アプリ本体のソースコードは [MIT License](./LICENSE) で公開しています。作者は優太です。
+
+収録単語データ（`data/words.json`）の第三者由来の内容には、MITライセンスを一括適用しません。CEFR-J由来の内容は出典表示を条件とする原典の利用条件、EJDict由来の内容はCC0 1.0に従います。再利用・再配布時にも [`data/SOURCES.md`](./data/SOURCES.md) の出典・利用条件を引き継いでください。依存パッケージにはそれぞれのライセンスが適用されます。
